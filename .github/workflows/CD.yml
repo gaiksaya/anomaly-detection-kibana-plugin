@@ -1,8 +1,12 @@
 name: Build and upload artifacts
 on:
+  # push:
+  #   tags:
+  #     - v*
   push:
-    tags:
-      - v*
+    branches:
+      - "release-workflow-patch"
+
 env:
   KIBANA_VERSION: 7.10.0
 jobs:
@@ -13,8 +17,8 @@ jobs:
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ secrets.AWS_STAGING_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_STAGING_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
       - name: Checkout Kibana
@@ -30,7 +34,6 @@ jobs:
         run: |
           echo "::set-output name=node_version::$(node -p "(require('./kibana/package.json').engines.node).match(/[.0-9]+/)[0]")"
           echo "::set-output name=yarn_version::$(node -p "(require('./kibana/package.json').engines.yarn).match(/[.0-9]+/)[0]")"
-
       - name: Setup node
         uses: actions/setup-node@v1
         with:
@@ -42,7 +45,6 @@ jobs:
           npm uninstall -g yarn
           echo "Installing yarn ${{ steps.versions_step.outputs.yarn_version }}"
           npm i -g yarn@${{ steps.versions_step.outputs.yarn_version }}
-
       - name: Checkout Anomaly Detection Kibana plugin
         uses: actions/checkout@v2
         with:
@@ -52,14 +54,19 @@ jobs:
         run: |
           cd kibana/plugins/anomaly-detection-kibana-plugin
           yarn kbn bootstrap
-
       - name: Build the artifact
         run: |
           cd kibana/plugins/anomaly-detection-kibana-plugin
           yarn build
-
-      - name: Upload the artifact
+      - name: Upload to S3
         run: |
           cd kibana/plugins/anomaly-detection-kibana-plugin
-          artifact=`ls build/*.zip`
-          aws s3 cp $artifact s3://artifacts.opendistroforelasticsearch.amazon.com/downloads/kibana-plugins/opendistro-anomaly-detection/
+          zip=`ls build/*.zip`
+
+          # Inject the build number before the suffix
+          zip_outfile=`basename ${zip%.zip}-build-${GITHUB_RUN_NUMBER}.zip`
+
+          s3_prefix="s3://staging.artifacts.opendistroforelasticsearch.amazon.com/snapshots/kibana-plugins/anomaly-detection/"
+
+          echo "Copying ${zip} to ${s3_prefix}${zip_outfile}"
+          aws s3 cp --quiet $zip ${s3_prefix}${zip_outfile}
